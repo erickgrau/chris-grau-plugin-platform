@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { MessageSquare, Upload, Radio, ArrowRight, Zap, Waveform, Music2 } from 'lucide-react'
+import { MessageSquare, Upload, Radio, ArrowRight, Zap, AudioWaveform, Music2 } from 'lucide-react'
 
 const modes = [
   {
@@ -51,7 +51,7 @@ const features = [
     description: 'AI-generated algorithms reviewed and refined by DSP engineers.',
   },
   {
-    icon: Waveform,
+    icon: AudioWaveform,
     title: 'In-Browser Preview',
     description: 'Hear it before you download it. No DAW needed to audition.',
   },
@@ -155,7 +155,7 @@ export default function HomePage() {
                   badge: 'bg-studio-red/20 text-studio-red',
                   glow: 'hover:shadow-red-500/10',
                 },
-              }[mode.accent]
+              }[mode.accent]!
 
               const CardWrapper = mode.available ? Link : 'div'
               const cardProps = mode.available ? { href: mode.href } : {}
