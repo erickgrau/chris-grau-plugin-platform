@@ -39,6 +39,43 @@ fastify.addHook('onRequest', async (req, reply) => {
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // Health check
+fastify.get('/', async (req, reply) => {
+  reply.type('text/html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chris Grau Plugin Platform — API</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d0d14; color: #e0e0f0; margin: 0; padding: 40px; }
+    h1 { font-size: 1.8rem; margin-bottom: 4px; color: #fff; }
+    p { color: #888; margin-top: 4px; }
+    .badge { display: inline-block; background: #1a1a2e; border: 1px solid #2a2a4a; padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; color: #7c8cff; margin-bottom: 24px; }
+    .endpoints { list-style: none; padding: 0; }
+    .endpoints li { background: #111120; border: 1px solid #1e1e35; border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; font-family: monospace; }
+    .method { color: #7c8cff; font-weight: bold; margin-right: 12px; }
+    .path { color: #e0e0f0; }
+    .desc { display: block; color: #666; font-size: 0.8rem; margin-top: 4px; font-family: sans-serif; }
+    .status { color: #4caf82; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>🎵 Chris Grau Plugin Platform</h1>
+  <p>AI-powered AU/VST3 audio plugin factory</p>
+  <div class="badge">API v0.1.0 · Online</div>
+  <ul class="endpoints">
+    <li><span class="method">GET</span><span class="path">/health</span><span class="desc">Service health check</span></li>
+    <li><span class="method">POST</span><span class="path">/api/plugins/generate</span><span class="desc">Generate a DspSpec from natural language description</span></li>
+    <li><span class="method">POST</span><span class="path">/api/plugins/:id/compile</span><span class="desc">Trigger GitHub Actions JUCE build</span></li>
+    <li><span class="method">GET</span><span class="path">/api/plugins/:id/status</span><span class="desc">Get plugin build status and download URLs</span></li>
+    <li><span class="method">GET</span><span class="path">/api/plugins</span><span class="desc">List plugins for a user</span></li>
+    <li><span class="method">POST</span><span class="path">/api/plugins/:id/preview</span><span class="desc">Stream WAV preview of compiled plugin</span></li>
+  </ul>
+  <p class="status">✓ All systems operational</p>
+</body>
+</html>`);
+});
+
 fastify.get('/health', async () => ({
   status: 'ok',
   service: 'chibitek-plugin-platform-backend',
