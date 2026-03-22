@@ -163,13 +163,31 @@ Return a DspSpec JSON object for this audio plugin.`;
   // Validate against our schema
   const result = DspSpecSchema.safeParse(parsed);
   if (!result.success) {
-    // Attempt recovery: inject missing top-level defaults
+    // Attempt recovery: inject missing top-level defaults + convert old format
     if (parsed && typeof parsed === 'object') {
       const p = parsed as Record<string, unknown>;
       if (!p.plugin_type) p.plugin_type = 'effect';
       if (!p.manufacturer) p.manufacturer = 'Chibitek Labs';
       if (!p.plugin_version) p.plugin_version = '1.0.0';
       if (!p.description) p.description = 'AI-generated plugin';
+      // Convert old flat parameters format to layers
+      if (!p.layers && p.parameters) {
+        const params = p.parameters as Record<string, unknown>;
+        const layerParams = Array.isArray(params)
+          ? params
+          : Object.entries(params).map(([key, val]: [string, unknown]) => {
+              const v = val as Record<string, unknown>;
+              return { id: key, name: v.label || key, min: v.min ?? 0, max: v.max ?? 1, default: v.default ?? 0, unit: v.unit || 'linear' };
+            });
+        p.layers = [{
+          id: (p.type as string) || 'layer_0',
+          type: (p.type as string) || 'reverb',
+          label: (p.type as string) ? String(p.type).charAt(0).toUpperCase() + String(p.type).slice(1) : 'Effect',
+          blend: 1.0,
+          parameters: layerParams,
+        }];
+        if (!p.signalFlow) p.signalFlow = [p.layers[0].id];
+      }
       const retry = DspSpecSchema.safeParse(p);
       if (retry.success) return retry.data;
     }
