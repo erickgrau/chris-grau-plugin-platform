@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Loader2, Hammer, Sparkles, User, Bot } from 'lucide-react'
-import { generateId, parseDspSpec, type ChatMessage, type DspSpec } from '@/lib/api'
+import { generateId, type ChatMessage, type DspSpec } from '@/lib/api'
 
 interface ChatPanelProps {
   onDspSpec:      (spec: DspSpec) => void
@@ -104,11 +104,11 @@ export default function ChatPanel({
 
       sse.addEventListener('dspSpec', (e) => {
         try {
-          const spec = parseDspSpec(JSON.parse(e.data))
-          if (spec) {
-            onDspSpec(spec)
+          const raw = JSON.parse(e.data)
+          if (raw && raw.id) {
+            onDspSpec(raw as DspSpec)
             setMessages(prev => prev.map(m =>
-              m.id === streamId ? { ...m, dspSpec: spec } : m
+              m.id === streamId ? { ...m, dspSpec: raw as DspSpec } : m
             ))
           }
         } catch { /* ignore malformed spec */ }

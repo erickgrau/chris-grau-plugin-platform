@@ -229,13 +229,13 @@ export default function PluginPreview({ spec, status, downloadUrl, onBuild, onPr
                 <span>Compiling…</span>
               </div>
             )}
-            {status === 'ready' && onPreview && (
+            {onPreview && (
               <button
                 onClick={onPreview}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-studio-amber/10 border border-studio-amber/30 text-studio-amber text-xs font-medium hover:bg-studio-amber/20 transition-colors"
               >
                 <Piano className="w-3.5 h-3.5" />
-                Preview
+                {status === 'ready' ? 'Preview' : 'Preview'}
               </button>
             )}
             {status === 'ready' && downloadUrl && (

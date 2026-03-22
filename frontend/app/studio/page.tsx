@@ -130,13 +130,14 @@ export default function StudioPage() {
           pluginName={previewPlugin.name}
           isOpen={true}
           onClose={() => setPreviewPlugin(null)}
+          mode={compileStatus === 'ready' ? 'real' : 'simulated'}
         />
       )}
 
       {/* Main split layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Chat panel */}
-        <div className="w-[420px] flex-none flex flex-col border-r border-studio-border">
+        {/* Left 40%: Chat panel */}
+        <div className="w-2/5 flex-none flex flex-col border-r border-studio-border">
           <ChatPanel
             onDspSpec={handleDspSpec}
             onBuildPlugin={handleBuildPlugin}
@@ -145,7 +146,7 @@ export default function StudioPage() {
           />
         </div>
 
-        {/* Right: Preview panels */}
+        {/* Right 60%: Plugin preview + audio strip */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Plugin visual preview */}
           <div className="flex-1 overflow-auto p-4">
@@ -155,7 +156,7 @@ export default function StudioPage() {
               downloadUrl={downloadUrl}
               onBuild={handleBuildPlugin}
               onPreview={
-                compileStatus === 'ready' && dspSpec
+                dspSpec
                   ? () => setPreviewPlugin({ id: dspSpec.id, name: dspSpec.name })
                   : undefined
               }
