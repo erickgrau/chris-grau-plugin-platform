@@ -103,7 +103,7 @@ Return a DspSpec JSON object for this audio plugin.`;
 
   // Use streaming for robustness with long responses
   const stream = await client.messages.stream({
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'claude-sonnet-4-5',
     max_tokens: 2048,
     system: SYSTEM_PROMPT,
     messages: [
