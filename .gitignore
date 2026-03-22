@@ -32,3 +32,4 @@ templates/*/.jucer
 
 # Logs
 *.log
+.vercel

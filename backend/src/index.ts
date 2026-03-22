@@ -8,6 +8,7 @@ import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { PrismaClient } from '@prisma/client';
 import { pluginRoutes } from './routes/plugins.js';
+import { previewRoutes } from './routes/preview.js';
 import { createCompileWorker } from './jobs/compile.js';
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -133,6 +134,7 @@ const start = async () => {
     // Register plugins and routes
     await fastify.register(fastifyWebsocket);
     await fastify.register(pluginRoutes, { prisma });
+    await fastify.register(previewRoutes, { prisma });
 
     // Test DB connection
     await prisma.$connect();

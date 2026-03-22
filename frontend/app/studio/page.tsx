@@ -6,6 +6,7 @@ import { ArrowLeft, Settings, HelpCircle } from 'lucide-react'
 import ChatPanel from '@/components/chat/ChatPanel'
 import PluginPreview from '@/components/preview/PluginPreview'
 import WebAudioPreview from '@/components/preview/WebAudioPreview'
+import KeyboardPreview from '@/components/KeyboardPreview'
 import type { DspSpec } from '@/lib/api'
 
 type CompileStatus = 'idle' | 'compiling' | 'ready' | 'error'
@@ -15,6 +16,7 @@ export default function StudioPage() {
   const [compileStatus, setCompileStatus] = useState<CompileStatus>('idle')
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const [pluginName, setPluginName] = useState<string>('Untitled Plugin')
+  const [previewPlugin, setPreviewPlugin] = useState<{ id: string; name: string } | null>(null)
 
   const handleDspSpec = useCallback((spec: DspSpec) => {
     setDspSpec(spec)
@@ -70,6 +72,16 @@ export default function StudioPage() {
         </div>
       </header>
 
+      {/* Piano keyboard preview modal */}
+      {previewPlugin && (
+        <KeyboardPreview
+          pluginId={previewPlugin.id}
+          pluginName={previewPlugin.name}
+          isOpen={true}
+          onClose={() => setPreviewPlugin(null)}
+        />
+      )}
+
       {/* Main split layout */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Chat panel */}
@@ -91,6 +103,11 @@ export default function StudioPage() {
               status={compileStatus}
               downloadUrl={downloadUrl}
               onBuild={handleBuildPlugin}
+              onPreview={
+                compileStatus === 'ready' && dspSpec
+                  ? () => setPreviewPlugin({ id: dspSpec.id, name: dspSpec.name })
+                  : undefined
+              }
             />
           </div>
 

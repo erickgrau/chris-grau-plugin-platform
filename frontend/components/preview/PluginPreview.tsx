@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Download, Loader2, CheckCircle, XCircle, Package, RotateCcw } from 'lucide-react'
+import { Download, Loader2, CheckCircle, XCircle, Package, RotateCcw, Piano } from 'lucide-react'
 import { formatParamValue, type DspSpec, type DspParam } from '@/lib/api'
 
 interface PluginPreviewProps {
@@ -9,6 +9,7 @@ interface PluginPreviewProps {
   status:      'idle' | 'compiling' | 'ready' | 'error'
   downloadUrl: string | null
   onBuild:     () => void
+  onPreview?:  () => void
 }
 
 // ─── Knob Component ───────────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ function ParamSlider({ param, value, onChange }: SliderProps) {
 
 // ─── Plugin Preview ───────────────────────────────────────────────────────────
 
-export default function PluginPreview({ spec, status, downloadUrl, onBuild }: PluginPreviewProps) {
+export default function PluginPreview({ spec, status, downloadUrl, onBuild, onPreview }: PluginPreviewProps) {
   const [paramValues, setParamValues] = useState<Record<string, number>>({})
 
   // Initialize param values from spec defaults
@@ -227,6 +228,15 @@ export default function PluginPreview({ spec, status, downloadUrl, onBuild }: Pl
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 <span>Compiling…</span>
               </div>
+            )}
+            {status === 'ready' && onPreview && (
+              <button
+                onClick={onPreview}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-studio-amber/10 border border-studio-amber/30 text-studio-amber text-xs font-medium hover:bg-studio-amber/20 transition-colors"
+              >
+                <Piano className="w-3.5 h-3.5" />
+                Preview
+              </button>
             )}
             {status === 'ready' && downloadUrl && (
               <a
