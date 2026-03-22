@@ -210,14 +210,33 @@ def main():
         print(f"ERROR: Invalid DspSpec JSON: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # ── Normalize field aliases ───────────────────────────────────────────────
+    # Accept "type" as an alias for "plugin_type" (common shorthand)
+    if "type" in spec and "plugin_type" not in spec:
+        spec["plugin_type"] = spec.pop("type")
+
+    template_dir = Path(args.template)
+
+    # ── Fall back to template's dsp_spec.json for missing parameters ──────────
+    if "parameters" not in spec:
+        fallback_path = template_dir / "dsp_spec.json"
+        if fallback_path.exists():
+            try:
+                fallback = json.loads(fallback_path.read_text())
+                if "parameters" in fallback:
+                    print(f"INFO: 'parameters' not in input spec — merging from {fallback_path}", file=sys.stderr)
+                    # Merge: input spec takes priority for everything except missing parameters
+                    merged = {**fallback, **spec}
+                    spec = merged
+            except json.JSONDecodeError as e:
+                print(f"WARNING: Could not parse template dsp_spec.json: {e}", file=sys.stderr)
+
     # ── Validate ──────────────────────────────────────────────────────────────
     errors = validate_spec(spec)
     if errors:
         for err in errors:
             print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(1)
-
-    template_dir = Path(args.template)
     if not template_dir.is_dir():
         print(f"ERROR: Template directory not found: {template_dir}", file=sys.stderr)
         sys.exit(1)
