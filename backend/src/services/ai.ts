@@ -186,7 +186,7 @@ Return a DspSpec JSON object for this audio plugin.`;
           blend: 1.0,
           parameters: layerParams,
         }];
-        if (!p.signalFlow) p.signalFlow = [p.layers[0].id];
+        if (!p.signalFlow) p.signalFlow = [(p.layers as any[])[0].id];
       }
       const retry = DspSpecSchema.safeParse(p);
       if (retry.success) return retry.data;
