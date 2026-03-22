@@ -40,9 +40,6 @@ jobs:
             ${{ env.BUILD_DIR }}
             ~/.cmake
           key: ${{ runner.os }}-cmake-${{ inputs.template_name }}-${{ hashFiles('**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-cmake-${{ inputs.template_name }}-
-            ${{ runner.os }}-cmake-
 
       # ─── 3. Install dependencies ────────────────────────────────────────────
       - name: Install system dependencies

@@ -5,9 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ─── JUCE ────────────────────────────────────────────────────────────────────
-# Assumes JUCE is available via FetchContent or a local path.
-# Set JUCE_PATH to your JUCE root, or let FetchContent download it.
-
 include(FetchContent)
 
 FetchContent_Declare(
@@ -20,33 +17,24 @@ FetchContent_MakeAvailable(JUCE)
 
 # ─── Plugin Target ───────────────────────────────────────────────────────────
 juce_add_plugin(ReverbPlate
-    # Plugin Identity
     PLUGIN_NAME             "Reverb Plate"
     PLUGIN_MANUFACTURER     "Chibitek Labs"
     PLUGIN_MANUFACTURER_CODE CHBT
     PLUGIN_CODE             RvPl
-
-    # Formats
     FORMATS                 AU VST3 Standalone
-
-    # Capabilities
     IS_SYNTH                FALSE
     NEEDS_MIDI_INPUT        FALSE
     NEEDS_MIDI_OUTPUT       FALSE
     IS_MIDI_EFFECT          FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-
-    # Bundle / product IDs
     BUNDLE_ID               com.chibitek.reverb-plate
     PRODUCT_NAME            "Reverb Plate"
     COMPANY_NAME            "Chibitek Labs"
-    COMPANY_WEBSITE         "https://chibitek.com"
-    COMPANY_EMAIL           "hello@chibitek.com"
-
     VST3_CATEGORIES         "Fx|Reverb"
     AU_MAIN_TYPE            kAudioUnitType_Effect
 )
 
+# Generate JuceHeader.h
 juce_generate_juce_header(ReverbPlate)
 
 target_sources(ReverbPlate
@@ -54,13 +42,6 @@ target_sources(ReverbPlate
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
 )
-
-target_include_directories(ReverbPlate
-    PRIVATE
-        Source
-)
-
-juce_generate_juce_header(ReverbPlate)
 
 target_compile_definitions(ReverbPlate
     PUBLIC
