@@ -1,6 +1,6 @@
-import type { NextConfig } from 'next'
 
-const nextConfig: NextConfig = {
+
+const nextConfig = {
   reactStrictMode: true,
   // Allow backend API proxy in dev
   async rewrites() {
