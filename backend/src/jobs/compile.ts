@@ -110,9 +110,27 @@ async function githubFetch<T>(path: string, options: RequestInit = {}): Promise<
   return res.json() as Promise<T>;
 }
 
+function selectTemplate(dspSpec: object): string {
+  const spec = dspSpec as Record<string, unknown>;
+  const fields = [spec.type, spec.algorithm, spec.plugin_type]
+    .map((v) => String(v ?? '').toLowerCase());
+
+  if (fields.some((f) => f.includes('reverb'))) return 'reverb-plate-v1';
+  return 'reverb-plate-v1';
+}
+
+function sanitizePluginName(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9 _-]/g, '')
+    .replace(/ /g, '_')
+    .slice(0, 50);
+}
+
 async function triggerWorkflow(
   pluginId: string,
-  compilationJobId: string
+  compilationJobId: string,
+  pluginName: string,
+  dspSpec: object
 ): Promise<void> {
   const owner = process.env.GITHUB_OWNER ?? 'chibitek-labs';
   const repo = process.env.GITHUB_REPO ?? 'plugin-compiler';
@@ -123,8 +141,9 @@ async function triggerWorkflow(
     body: JSON.stringify({
       ref: 'main',
       inputs: {
-        plugin_id: pluginId,
-        job_id: compilationJobId,
+        template_name: selectTemplate(dspSpec),
+        plugin_name: sanitizePluginName(pluginName),
+        dsp_spec_json: JSON.stringify(dspSpec),
       },
     }),
   });
@@ -231,8 +250,18 @@ export function createCompileWorker(): Worker<CompileJobData, CompileJobResult> 
       const triggerTime = new Date();
 
       try {
-        // Step 1: Trigger GitHub Actions workflow
-        await triggerWorkflow(pluginId, compilationJobId);
+        // Step 1: Fetch plugin data then trigger GitHub Actions workflow
+        const { data: plugin, error: pluginError } = await supabase
+          .from('plugins')
+          .select('name, dspSpec')
+          .eq('id', pluginId)
+          .single();
+
+        if (pluginError || !plugin) {
+          throw new Error(`Failed to fetch plugin ${pluginId}: ${pluginError?.message ?? 'not found'}`);
+        }
+
+        await triggerWorkflow(pluginId, compilationJobId, plugin.name as string, plugin.dspSpec as object);
         console.log(`[compile] Workflow dispatched for plugin ${pluginId}`);
 
         // Step 2: Wait for GitHub to register the run (up to 30s)
