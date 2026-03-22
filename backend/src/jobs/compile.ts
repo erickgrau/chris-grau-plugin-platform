@@ -197,8 +197,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData, CompileJobResult> {
-  const connection = getRedisConnection();
-
   const worker = new Worker<CompileJobData, CompileJobResult>(
     'plugin-compilation',
     async (job: Job<CompileJobData>): Promise<CompileJobResult> => {
@@ -312,7 +310,11 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
       }
     },
     {
-      connection,
+      connection: {
+        host: process.env.REDIS_HOST ?? 'localhost',
+        port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
+        password: process.env.REDIS_PASSWORD || undefined,
+      },
       concurrency: 5,
     }
   );

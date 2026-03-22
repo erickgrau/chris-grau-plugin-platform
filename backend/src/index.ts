@@ -26,10 +26,6 @@ const fastify = Fastify({
   },
 });
 
-// ─── Plugins ──────────────────────────────────────────────────────────────────
-
-await fastify.register(fastifyWebsocket);
-
 // ─── CORS (manual, avoids dependency) ────────────────────────────────────────
 
 fastify.addHook('onRequest', async (req, reply) => {
@@ -53,9 +49,6 @@ fastify.get('/health', async () => ({
   timestamp: new Date().toISOString(),
 }));
 
-// Plugin routes
-await fastify.register(pluginRoutes, { prisma });
-
 // WebSocket: real-time job status updates
 fastify.get('/ws/plugins/:id/status', { websocket: true }, (socket, req) => {
   const pluginId = (req.params as { id: string }).id;
@@ -77,18 +70,18 @@ fastify.get('/ws/plugins/:id/status', { websocket: true }, (socket, req) => {
       });
 
       if (!plugin) {
-        socket.send(JSON.stringify({ error: 'Plugin not found' }));
+        socket.socket.send(JSON.stringify({ error: 'Plugin not found' }));
         if (interval) clearInterval(interval);
-        socket.close();
+        socket.socket.close();
         return;
       }
 
-      socket.send(JSON.stringify(plugin));
+      socket.socket.send(JSON.stringify(plugin));
 
       // Stop polling once terminal state is reached
       if (plugin.status === 'READY' || plugin.status === 'FAILED') {
         if (interval) clearInterval(interval);
-        socket.close();
+        socket.socket.close();
       }
     } catch (err) {
       fastify.log.error(err, 'WebSocket status poll error');
@@ -99,7 +92,7 @@ fastify.get('/ws/plugins/:id/status', { websocket: true }, (socket, req) => {
   sendStatus();
   interval = setInterval(sendStatus, 5000);
 
-  socket.on('close', () => {
+  socket.socket.on('close', () => {
     if (interval) clearInterval(interval);
     fastify.log.info(`WebSocket disconnected for plugin ${pluginId}`);
   });
@@ -137,6 +130,10 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 const start = async () => {
   try {
+    // Register plugins and routes
+    await fastify.register(fastifyWebsocket);
+    await fastify.register(pluginRoutes, { prisma });
+
     // Test DB connection
     await prisma.$connect();
     fastify.log.info('Database connected');
