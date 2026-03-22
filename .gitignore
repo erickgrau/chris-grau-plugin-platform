@@ -10,6 +10,9 @@ frontend/out/
 # Build outputs
 build/
 dist/
+# Don't ignore Next.js API route directories named "build"
+!frontend/app/api/build/
+!frontend/app/api/build/**
 *.o
 *.a
 *.dylib

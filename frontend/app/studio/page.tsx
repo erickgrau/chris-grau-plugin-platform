@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, Settings, HelpCircle } from 'lucide-react'
 import ChatPanel from '@/components/chat/ChatPanel'
@@ -11,33 +11,84 @@ import type { DspSpec } from '@/lib/api'
 
 type CompileStatus = 'idle' | 'compiling' | 'ready' | 'error'
 
+interface BuildResult {
+  jobId:     string
+  pluginId:  string
+  status:    'queued' | 'compiling' | 'done' | 'failed'
+  progress?: number
+  result?:   { downloadUrl: string; pkgUrl: string }
+}
+
 export default function StudioPage() {
   const [dspSpec, setDspSpec] = useState<DspSpec | null>(null)
   const [compileStatus, setCompileStatus] = useState<CompileStatus>('idle')
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [buildProgress, setBuildProgress] = useState<number>(0)
   const [pluginName, setPluginName] = useState<string>('Untitled Plugin')
   const [previewPlugin, setPreviewPlugin] = useState<{ id: string; name: string } | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
 
   const handleDspSpec = useCallback((spec: DspSpec) => {
     setDspSpec(spec)
     setPluginName(spec.name || 'Untitled Plugin')
     setCompileStatus('idle')
     setDownloadUrl(null)
+    setBuildProgress(0)
+    stopPolling()
   }, [])
 
   const handleBuildPlugin = useCallback(async () => {
     if (!dspSpec) return
+    stopPolling()
     setCompileStatus('compiling')
+    setBuildProgress(0)
+    setDownloadUrl(null)
+
     try {
       const res = await fetch('/api/build', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec: dspSpec }),
+        body:    JSON.stringify({ spec: dspSpec, pluginId: dspSpec.id }),
       })
-      if (!res.ok) throw new Error('Build failed')
-      const data = await res.json() as { downloadUrl: string }
-      setDownloadUrl(data.downloadUrl)
-      setCompileStatus('ready')
+      if (!res.ok) throw new Error('Build request failed')
+      const buildData = (await res.json()) as { jobId: string; pluginId: string }
+      const { jobId } = buildData
+
+      // Poll for status every 3 seconds
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/build/${encodeURIComponent(jobId)}`)
+          if (!statusRes.ok) return
+          const statusData = (await statusRes.json()) as BuildResult
+
+          setBuildProgress(statusData.progress ?? 0)
+
+          if (statusData.status === 'done') {
+            stopPolling()
+            const url =
+              statusData.result?.pkgUrl ||
+              statusData.result?.downloadUrl ||
+              null
+            setDownloadUrl(url)
+            setCompileStatus('ready')
+            if (url && dspSpec) {
+              setPreviewPlugin({ id: dspSpec.id, name: dspSpec.name })
+            }
+          } else if (statusData.status === 'failed') {
+            stopPolling()
+            setCompileStatus('error')
+          }
+        } catch {
+          // swallow transient poll errors
+        }
+      }, 3000)
     } catch {
       setCompileStatus('error')
     }
