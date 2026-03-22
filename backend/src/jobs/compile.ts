@@ -126,6 +126,25 @@ function sanitizePluginName(name: string): string {
     .slice(0, 50);
 }
 
+function transformDspSpecForInject(dspSpec: object): object {
+  const spec = dspSpec as Record<string, unknown>;
+  const params = spec.parameters;
+  if (params && !Array.isArray(params) && typeof params === 'object') {
+    return {
+      ...spec,
+      parameters: Object.entries(params as Record<string, Record<string, unknown>>).map(([key, val]) => ({
+        id: key,
+        name: val.label || key,
+        min: val.min ?? 0,
+        max: val.max ?? 1,
+        default: val.default ?? 0,
+        unit: val.unit || 'linear',
+      })),
+    };
+  }
+  return spec;
+}
+
 async function triggerWorkflow(
   pluginId: string,
   compilationJobId: string,
@@ -143,7 +162,7 @@ async function triggerWorkflow(
       inputs: {
         template_name: selectTemplate(dspSpec),
         plugin_name: sanitizePluginName(pluginName),
-        dsp_spec_json: JSON.stringify(dspSpec),
+        dsp_spec_json: JSON.stringify(transformDspSpecForInject(dspSpec)),
       },
     }),
   });
