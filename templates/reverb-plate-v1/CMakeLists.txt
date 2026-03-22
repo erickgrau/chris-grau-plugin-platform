@@ -47,6 +47,8 @@ juce_add_plugin(ReverbPlate
     AU_MAIN_TYPE            kAudioUnitType_Effect
 )
 
+juce_generate_juce_header(ReverbPlate)
+
 target_sources(ReverbPlate
     PRIVATE
         Source/PluginProcessor.cpp
