@@ -44,24 +44,33 @@ interface GitHubArtifact {
 
 let _redis: IORedis | null = null;
 
+function getRedisOptions() {
+  if (process.env.REDIS_URL) {
+    const url = new URL(process.env.REDIS_URL);
+    return {
+      host: url.hostname,
+      port: parseInt(url.port || '6379', 10),
+      password: url.password || undefined,
+      maxRetriesPerRequest: null as null,
+    };
+  }
+  return {
+    host: process.env.REDIS_HOST ?? 'localhost',
+    port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
+    password: process.env.REDIS_PASSWORD || undefined,
+    maxRetriesPerRequest: null as null,
+  };
+}
+
 export function getRedisConnection(): IORedis {
   if (!_redis) {
-    _redis = new IORedis({
-      host: process.env.REDIS_HOST ?? 'localhost',
-      port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-      password: process.env.REDIS_PASSWORD || undefined,
-      maxRetriesPerRequest: null, // required by BullMQ
-    });
+    _redis = new IORedis(getRedisOptions());
   }
   return _redis;
 }
 
 export const compileQueue = new Queue<CompileJobData>('plugin-compilation', {
-  connection: {
-    host: process.env.REDIS_HOST ?? 'localhost',
-    port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-    password: process.env.REDIS_PASSWORD || undefined,
-  },
+  connection: getRedisOptions(),
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -310,11 +319,7 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
       }
     },
     {
-      connection: {
-        host: process.env.REDIS_HOST ?? 'localhost',
-        port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-        password: process.env.REDIS_PASSWORD || undefined,
-      },
+      connection: getRedisOptions(),
       concurrency: 5,
     }
   );

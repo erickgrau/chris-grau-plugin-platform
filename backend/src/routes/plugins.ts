@@ -151,7 +151,7 @@ export async function pluginRoutes(
 
       // Enqueue BullMQ job
       const bullJob = await compileQueue.add(
-        `compile-${pluginId}`,
+        `compile-${pluginId}` as string,
         {
           pluginId,
           compilationJobId: compilationJob.id,
