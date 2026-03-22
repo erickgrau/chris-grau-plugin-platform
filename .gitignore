@@ -36,3 +36,4 @@ templates/*/.jucer
 # Logs
 *.log
 .vercel
+!frontend/app/api/build/
