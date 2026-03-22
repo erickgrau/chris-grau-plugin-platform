@@ -60,6 +60,8 @@ target_include_directories(ReverbPlate
         Source
 )
 
+juce_generate_juce_header(ReverbPlate)
+
 target_compile_definitions(ReverbPlate
     PUBLIC
         JUCE_WEB_BROWSER=0
