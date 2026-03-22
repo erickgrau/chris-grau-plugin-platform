@@ -8,7 +8,6 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -17,6 +16,7 @@ import { mkdir, access } from 'node:fs/promises';
 import path from 'node:path';
 import https from 'node:https';
 import http from 'node:http';
+import { supabase } from '../lib/supabase.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -88,10 +88,8 @@ function downloadFile(url: string, dest: string): Promise<void> {
 // ─── Route Plugin ─────────────────────────────────────────────────────────────
 
 export async function previewRoutes(
-  fastify: FastifyInstance,
-  options: { prisma: PrismaClient }
+  fastify: FastifyInstance
 ): Promise<void> {
-  const { prisma } = options;
 
   // POST /api/plugins/:id/preview
   fastify.post(
@@ -113,8 +111,13 @@ export async function previewRoutes(
       const { note, duration } = parseResult.data;
 
       // Look up plugin in database
-      const plugin = await prisma.plugin.findUnique({ where: { id: pluginId } });
-      if (!plugin) {
+      const { data: plugin, error: pluginError } = await supabase
+        .from('plugins')
+        .select('id, status, auUrl')
+        .eq('id', pluginId)
+        .single();
+
+      if (pluginError || !plugin) {
         return reply.status(404).send({ error: 'Plugin not found' });
       }
 

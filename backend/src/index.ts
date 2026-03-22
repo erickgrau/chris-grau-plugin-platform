@@ -6,16 +6,12 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
-import { PrismaClient } from '@prisma/client';
+import { supabase } from './lib/supabase.js';
 import { pluginRoutes } from './routes/plugins.js';
 import { previewRoutes } from './routes/preview.js';
 import { createCompileWorker } from './jobs/compile.js';
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-
-const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-});
 
 const fastify = Fastify({
   logger: {
@@ -59,18 +55,13 @@ fastify.get('/ws/plugins/:id/status', { websocket: true }, (socket, req) => {
 
   const sendStatus = async () => {
     try {
-      const plugin = await prisma.plugin.findUnique({
-        where: { id: pluginId },
-        select: {
-          id: true,
-          status: true,
-          auUrl: true,
-          vst3Url: true,
-          pkgUrl: true,
-        },
-      });
+      const { data: plugin, error } = await supabase
+        .from('plugins')
+        .select('id, status, auUrl, vst3Url, pkgUrl')
+        .eq('id', pluginId)
+        .single();
 
-      if (!plugin) {
+      if (error || !plugin) {
         socket.socket.send(JSON.stringify({ error: 'Plugin not found' }));
         if (interval) clearInterval(interval);
         socket.socket.close();
@@ -104,7 +95,7 @@ fastify.get('/ws/plugins/:id/status', { websocket: true }, (socket, req) => {
 let worker: ReturnType<typeof createCompileWorker> | null = null;
 
 if (process.env.START_WORKER !== 'false') {
-  worker = createCompileWorker(prisma);
+  worker = createCompileWorker();
   fastify.log.info('BullMQ compile worker started');
 }
 
@@ -115,7 +106,6 @@ const shutdown = async (signal: string) => {
   try {
     await fastify.close();
     if (worker) await worker.close();
-    await prisma.$disconnect();
     fastify.log.info('Shutdown complete');
     process.exit(0);
   } catch (err) {
@@ -133,12 +123,8 @@ const start = async () => {
   try {
     // Register plugins and routes
     await fastify.register(fastifyWebsocket);
-    await fastify.register(pluginRoutes, { prisma });
-    await fastify.register(previewRoutes, { prisma });
-
-    // Test DB connection
-    await prisma.$connect();
-    fastify.log.info('Database connected');
+    await fastify.register(pluginRoutes);
+    await fastify.register(previewRoutes);
 
     const host = process.env.HOST ?? '0.0.0.0';
     const port = parseInt(process.env.PORT ?? '3001', 10);
@@ -147,7 +133,6 @@ const start = async () => {
     fastify.log.info(`Server running at http://${host}:${port}`);
   } catch (err) {
     fastify.log.error(err, 'Server startup failed');
-    await prisma.$disconnect();
     process.exit(1);
   }
 };

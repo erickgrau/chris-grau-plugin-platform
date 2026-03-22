@@ -5,7 +5,7 @@
 
 import { Worker, Job, Queue } from 'bullmq';
 import IORedis from 'ioredis';
-import { PrismaClient } from '@prisma/client';
+import { supabase } from '../lib/supabase.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -171,7 +171,6 @@ async function pollWorkflowCompletion(
 
 async function getArtifactUrls(
   runId: number,
-  prisma: PrismaClient,
   pluginId: string
 ): Promise<{ auUrl?: string; vst3Url?: string; pkgUrl?: string }> {
   const owner = process.env.GITHUB_OWNER ?? 'chibitek-labs';
@@ -205,7 +204,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData, CompileJobResult> {
+export function createCompileWorker(): Worker<CompileJobData, CompileJobResult> {
   const worker = new Worker<CompileJobData, CompileJobResult>(
     'plugin-compilation',
     async (job: Job<CompileJobData>): Promise<CompileJobResult> => {
@@ -214,19 +213,20 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
       console.log(`[compile] Starting job ${job.id} for plugin ${pluginId}`);
 
       // Mark job as running
-      await prisma.compilationJob.update({
-        where: { id: compilationJobId },
-        data: {
+      await supabase
+        .from('compilation_jobs')
+        .update({
           status: 'RUNNING',
-          startedAt: new Date(),
+          startedAt: new Date().toISOString(),
           runnerId: job.id ?? null,
-        },
-      });
+          updatedAt: new Date().toISOString(),
+        })
+        .eq('id', compilationJobId);
 
-      await prisma.plugin.update({
-        where: { id: pluginId },
-        data: { status: 'COMPILING' },
-      });
+      await supabase
+        .from('plugins')
+        .update({ status: 'COMPILING', updatedAt: new Date().toISOString() })
+        .eq('id', pluginId);
 
       const triggerTime = new Date();
 
@@ -250,10 +250,10 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
         console.log(`[compile] Found workflow run ${workflowRun.id}`);
 
         // Update DB with runner reference
-        await prisma.compilationJob.update({
-          where: { id: compilationJobId },
-          data: { runnerId: String(workflowRun.id) },
-        });
+        await supabase
+          .from('compilation_jobs')
+          .update({ runnerId: String(workflowRun.id), updatedAt: new Date().toISOString() })
+          .eq('id', compilationJobId);
 
         // Step 3: Poll until complete
         const completedRun = await pollWorkflowCompletion(workflowRun.id);
@@ -264,18 +264,19 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
         }
 
         // Step 4: Fetch artifact URLs
-        const artifactUrls = await getArtifactUrls(workflowRun.id, prisma, pluginId);
+        const artifactUrls = await getArtifactUrls(workflowRun.id, pluginId);
 
         // Step 5: Update Plugin with download URLs
-        await prisma.plugin.update({
-          where: { id: pluginId },
-          data: {
+        await supabase
+          .from('plugins')
+          .update({
             status: 'READY',
             auUrl: artifactUrls.auUrl ?? null,
             vst3Url: artifactUrls.vst3Url ?? null,
             pkgUrl: artifactUrls.pkgUrl ?? null,
-          },
-        });
+            updatedAt: new Date().toISOString(),
+          })
+          .eq('id', pluginId);
 
         // Step 6: Mark compilation job as completed
         const result: CompileJobResult = {
@@ -285,35 +286,36 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
           pluginvalResult: 'pass',
         };
 
-        await prisma.compilationJob.update({
-          where: { id: compilationJobId },
-          data: {
+        await supabase
+          .from('compilation_jobs')
+          .update({
             status: 'COMPLETED',
-            completedAt: new Date(),
+            completedAt: new Date().toISOString(),
             auvalResult: result.auvalResult,
             pluginvalResult: result.pluginvalResult,
-          },
-        });
+            updatedAt: new Date().toISOString(),
+          })
+          .eq('id', compilationJobId);
 
         return result;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`[compile] Job failed for plugin ${pluginId}: ${errorMessage}`);
 
-        await prisma.plugin.update({
-          where: { id: pluginId },
-          data: { status: 'FAILED' },
-        });
+        await supabase
+          .from('plugins')
+          .update({ status: 'FAILED', updatedAt: new Date().toISOString() })
+          .eq('id', pluginId);
 
-        await prisma.compilationJob.update({
-          where: { id: compilationJobId },
-          data: {
+        await supabase
+          .from('compilation_jobs')
+          .update({
             status: 'FAILED',
-            completedAt: new Date(),
+            completedAt: new Date().toISOString(),
             errorLog: errorMessage,
-            retryCount: { increment: 1 },
-          },
-        });
+            updatedAt: new Date().toISOString(),
+          })
+          .eq('id', compilationJobId);
 
         throw error;
       }
@@ -324,7 +326,7 @@ export function createCompileWorker(prisma: PrismaClient): Worker<CompileJobData
     }
   );
 
-  worker.on('completed', (job, result) => {
+  worker.on('completed', (job) => {
     console.log(`[compile] Job ${job.id} completed for plugin ${job.data.pluginId}`);
   });
 

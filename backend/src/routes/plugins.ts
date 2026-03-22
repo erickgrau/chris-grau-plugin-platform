@@ -7,10 +7,10 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { generateDspSpec } from '../services/ai.js';
 import { compileQueue } from '../jobs/compile.js';
+import { supabase } from '../lib/supabase.js';
 
 // ─── Request/Response Schemas ──────────────────────────────────────────────────
 
@@ -18,20 +18,18 @@ const GenerateRequestSchema = z.object({
   description: z.string().min(10, 'Description must be at least 10 characters').max(2000),
   mode: z.number().int().min(1).max(3).default(2),
   name: z.string().min(1).max(100).optional(),
-  userId: z.string().cuid().optional(), // In production, pull from session
+  userId: z.string().optional(), // In production, pull from session
 });
 
 const CompileRequestSchema = z.object({
-  userId: z.string().cuid().optional(), // In production, pull from session
+  userId: z.string().optional(), // In production, pull from session
 });
 
 // ─── Route Plugin ─────────────────────────────────────────────────────────────
 
 export async function pluginRoutes(
-  fastify: FastifyInstance,
-  options: { prisma: PrismaClient }
+  fastify: FastifyInstance
 ): Promise<void> {
-  const { prisma } = options;
 
   // ─── POST /api/plugins/generate ─────────────────────────────────────────────
 
@@ -52,21 +50,46 @@ export async function pluginRoutes(
       let resolvedUserId = userId;
       if (!resolvedUserId) {
         // Dev mode: use/create a default dev user
-        const devUser = await prisma.user.upsert({
-          where: { email: 'dev@chibitek.local' },
-          update: {},
-          create: {
-            email: 'dev@chibitek.local',
-            name: 'Dev User',
-            tier: 'PRO',
-          },
-        });
-        resolvedUserId = devUser.id;
+        const { data: existingUser } = await supabase
+          .from('users')
+          .select('id')
+          .eq('email', 'dev@chibitek.local')
+          .single();
+
+        if (existingUser) {
+          resolvedUserId = existingUser.id;
+        } else {
+          const now = new Date().toISOString();
+          const { data: newUser, error: createError } = await supabase
+            .from('users')
+            .insert({
+              id: crypto.randomUUID(),
+              email: 'dev@chibitek.local',
+              name: 'Dev User',
+              tier: 'PRO',
+              buildsThisMonth: 0,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .select('id')
+            .single();
+
+          if (createError || !newUser) {
+            fastify.log.error(createError, 'Failed to create dev user');
+            return reply.status(500).send({ error: 'Failed to resolve user' });
+          }
+          resolvedUserId = newUser.id;
+        }
       }
 
       // Check build limits for FREE tier
-      const user = await prisma.user.findUnique({ where: { id: resolvedUserId } });
-      if (!user) {
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', resolvedUserId)
+        .single();
+
+      if (userError || !user) {
         return reply.status(404).send({ error: 'User not found' });
       }
       if (user.tier === 'FREE' && user.buildsThisMonth >= 3) {
@@ -81,16 +104,27 @@ export async function pluginRoutes(
         const dspSpec = await generateDspSpec(description, mode);
 
         // Persist plugin record
-        const plugin = await prisma.plugin.create({
-          data: {
+        const now = new Date().toISOString();
+        const { data: plugin, error: pluginError } = await supabase
+          .from('plugins')
+          .insert({
+            id: crypto.randomUUID(),
             userId: resolvedUserId,
             name: name ?? derivePluginName(description),
             description,
             mode,
             dspSpec: dspSpec as object,
             status: 'PENDING',
-          },
-        });
+            version: '1.0.0',
+            createdAt: now,
+            updatedAt: now,
+          })
+          .select()
+          .single();
+
+        if (pluginError || !plugin) {
+          throw new Error(pluginError?.message ?? 'Failed to create plugin');
+        }
 
         return reply.status(201).send({
           pluginId: plugin.id,
@@ -116,8 +150,13 @@ export async function pluginRoutes(
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const { id: pluginId } = req.params;
 
-      const plugin = await prisma.plugin.findUnique({ where: { id: pluginId } });
-      if (!plugin) {
+      const { data: plugin, error: pluginError } = await supabase
+        .from('plugins')
+        .select('*')
+        .eq('id', pluginId)
+        .single();
+
+      if (pluginError || !plugin) {
         return reply.status(404).send({ error: 'Plugin not found' });
       }
 
@@ -136,18 +175,30 @@ export async function pluginRoutes(
       }
 
       // Create CompilationJob record
-      const compilationJob = await prisma.compilationJob.create({
-        data: {
+      const now = new Date().toISOString();
+      const { data: compilationJob, error: jobError } = await supabase
+        .from('compilation_jobs')
+        .insert({
+          id: crypto.randomUUID(),
           pluginId,
           status: 'QUEUED',
-        },
-      });
+          retryCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .select()
+        .single();
+
+      if (jobError || !compilationJob) {
+        fastify.log.error(jobError, 'Failed to create compilation job');
+        return reply.status(500).send({ error: 'Failed to create compilation job' });
+      }
 
       // Update plugin status
-      await prisma.plugin.update({
-        where: { id: pluginId },
-        data: { status: 'PENDING' },
-      });
+      await supabase
+        .from('plugins')
+        .update({ status: 'PENDING', updatedAt: new Date().toISOString() })
+        .eq('id', pluginId);
 
       // Enqueue BullMQ job
       const bullJob = await compileQueue.add(
@@ -179,21 +230,25 @@ export async function pluginRoutes(
     async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
       const { id: pluginId } = req.params;
 
-      const plugin = await prisma.plugin.findUnique({
-        where: { id: pluginId },
-        include: {
-          compilationJobs: {
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-          },
-        },
-      });
+      const { data: plugin, error: pluginError } = await supabase
+        .from('plugins')
+        .select('*')
+        .eq('id', pluginId)
+        .single();
 
-      if (!plugin) {
+      if (pluginError || !plugin) {
         return reply.status(404).send({ error: 'Plugin not found' });
       }
 
-      const latestJob = plugin.compilationJobs[0] ?? null;
+      // Fetch latest compilation job
+      const { data: jobs } = await supabase
+        .from('compilation_jobs')
+        .select('*')
+        .eq('pluginId', pluginId)
+        .order('createdAt', { ascending: false })
+        .limit(1);
+
+      const latestJob = jobs?.[0] ?? null;
 
       return reply.send({
         pluginId: plugin.id,
@@ -233,25 +288,18 @@ export async function pluginRoutes(
         return reply.status(400).send({ error: 'userId query param required' });
       }
 
-      const plugins = await prisma.plugin.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          mode: true,
-          status: true,
-          version: true,
-          auUrl: true,
-          vst3Url: true,
-          pkgUrl: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
+      const { data: plugins, error } = await supabase
+        .from('plugins')
+        .select('id, name, description, mode, status, version, auUrl, vst3Url, pkgUrl, createdAt, updatedAt')
+        .eq('userId', userId)
+        .order('createdAt', { ascending: false });
 
-      return reply.send({ plugins });
+      if (error) {
+        fastify.log.error(error, 'Failed to list plugins');
+        return reply.status(500).send({ error: 'Failed to list plugins' });
+      }
+
+      return reply.send({ plugins: plugins ?? [] });
     }
   );
 }
