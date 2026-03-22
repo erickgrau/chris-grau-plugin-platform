@@ -17,7 +17,7 @@ ReverbPlateEditor::ReverbPlateEditor (ReverbPlateAudioProcessor& p)
         addAndMakeVisible (label);
         label.setText (labelText, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
-        label.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        label.setFont (juce::Font (13.0f, juce::Font::bold));
 
         attach = std::make_unique<SliderAttachment> (processorRef.apvts, paramID, knob);
     };
@@ -43,7 +43,7 @@ void ReverbPlateEditor::paint (juce::Graphics& g)
     g.fillRect (0, 0, getWidth(), 36);
 
     g.setColour (juce::Colours::white);
-    g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    g.setFont (juce::Font (16.0f, juce::Font::bold));
     g.drawText ("REVERB PLATE  |  Chibitek Labs",
                 0, 0, getWidth(), 36,
                 juce::Justification::centred);
