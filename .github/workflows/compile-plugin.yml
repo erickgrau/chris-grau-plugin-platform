@@ -24,7 +24,7 @@ env:
 jobs:
   compile:
     name: Compile & Package Plugin
-    runs-on: macos-latest
+    runs-on: macos-14
     timeout-minutes: 60
 
     steps:
