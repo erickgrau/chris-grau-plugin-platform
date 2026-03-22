@@ -1,221 +1,396 @@
-# Chibitek Labs — AI-Powered AU/VST Plugin Builder Platform
+# Chris Grau Plugin Platform
 
-An AI-driven pipeline that takes a JUCE template + a DSP spec and compiles, validates, signs, and packages it as a macOS `.pkg` installer — automatically.
+An AI-powered audio plugin factory. Describe a plugin in plain English, get back a signed, installable AU/VST3/PKG for macOS.
+
+Built for Chris Grau. Powered by Claude, JUCE, and GitHub Actions.
+
+---
+
+## What This Is
+
+You type: *"A warm plate reverb with pre-delay and a dry/wet mix knob"*
+
+The platform:
+1. Sends your description to Claude (3.5 Sonnet), which returns a structured DSP spec (parameters, algorithm, signal flow)
+2. Enqueues a compilation job via BullMQ
+3. Triggers a GitHub Actions workflow that injects the spec into a JUCE template, compiles AU + VST3 + Standalone, validates with auval + pluginval, and packages a macOS `.pkg` installer
+4. Polls for completion and surfaces download URLs in the UI
+
+Zero DSP knowledge required.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Browser (Next.js 14)                         │
+│                                                                     │
+│   ┌──────────────────┐                ┌──────────────────────────┐  │
+│   │    Chat Panel    │◄── SSE tokens  │     Plugin Studio        │  │
+│   │  (AI chat UI)    │                │  (preview, build, DL)    │  │
+│   └──────────────────┘                └──────────────────────────┘  │
+└──────────────┬──────────────────────────────────┬───────────────────┘
+               │ HTTP / WebSocket                 │ HTTP
+               ▼                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      Fastify API  (port 3001)                        │
+│                                                                      │
+│   POST /api/plugins/generate    ──►  AI Service (Claude 3.5 Sonnet) │
+│   POST /api/plugins/:id/compile ──►  BullMQ Queue                   │
+│   GET  /api/plugins/:id/status                                       │
+│   GET  /api/plugins                                                  │
+│   WS   /ws/plugins/:id/status                                        │
+└──────────┬────────────────────────────────┬─────────────────────────┘
+           │ Prisma ORM                     │ BullMQ / ioredis
+           ▼                                ▼
+┌──────────────────────┐      ┌──────────────────────────────────────┐
+│   Supabase           │      │   Redis 7   (job queue + state)      │
+│   PostgreSQL 16      │      └───────────────────┬──────────────────┘
+│   (5 tables)         │                          │ worker dequeues
+└──────────────────────┘                          ▼
+                                   ┌──────────────────────────────────┐
+                                   │        BullMQ Worker             │
+                                   │        (concurrency: 5)          │
+                                   │                                  │
+                                   │  1. DB → status RUNNING          │
+                                   │  2. POST workflow_dispatch       │
+                                   │  3. Poll GitHub API every 15s    │
+                                   │  4. Fetch artifact URLs          │
+                                   │  5. DB → status READY            │
+                                   └───────────────┬──────────────────┘
+                                                   │ GitHub API
+                                                   ▼
+                                   ┌──────────────────────────────────┐
+                                   │  GitHub Actions  (macos-latest)  │
+                                   │                                  │
+                                   │   1.  Checkout                   │
+                                   │   2.  Cache CMake / JUCE         │
+                                   │   3.  Install cmake + ninja      │
+                                   │   4.  inject_spec.py             │
+                                   │   5.  cmake configure            │
+                                   │   6.  cmake build (Release)      │
+                                   │   7.  Locate .component + .vst3  │
+                                   │   8.  Codesign (optional)        │
+                                   │   9.  auval + pluginval          │
+                                   │  10.  package_plugin.sh → .pkg   │
+                                   │  11.  Upload artifact (30 days)  │
+                                   │  12.  Notify on failure          │
+                                   └──────────────────────────────────┘
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| Frontend | Next.js 14, React 18, Tailwind CSS | Plugin builder UI, streaming chat |
+| Real-time | Server-Sent Events, Socket.IO | Chat token streaming, build status |
+| Audio preview | Tone.js 15 | In-browser Web Audio preview |
+| Backend | Fastify 4, TypeScript | REST API + WebSocket server |
+| AI | Claude 3.5 Sonnet (`@anthropic-ai/sdk`) | Natural language → DspSpec JSON |
+| Job queue | BullMQ 5, ioredis | Async compilation, retry logic |
+| Database | PostgreSQL 16 via Supabase, Prisma 5 | Plugin and job persistence |
+| Build | GitHub Actions (`macos-latest`) | JUCE compilation, signing, packaging |
+| Audio SDK | JUCE 7.0.12 (FetchContent) | AU, VST3, Standalone targets |
+| Validation | auval, pluginval 1.0.3 | Plugin format verification |
+| Scripts | Python 3, Bash | Spec injection, .pkg creation |
+| Containers | Docker Compose | Local Postgres + Redis |
+| Future | Cloudflare R2 | Artifact storage |
+| Future | Stripe | Billing and subscriptions |
+
+---
+
+## End-to-End Flow
+
+```
+"warm plate reverb, pre-delay 0–100ms, room size, dry/wet mix"
+      │
+      ▼
+POST /api/plugins/generate
+  └─► Claude 3.5 Sonnet → DspSpec JSON:
+      {
+        "type": "effect",
+        "algorithm": "plate_reverb",
+        "templateId": "reverb-plate-v1",
+        "parameters": [
+          { "id": "roomSize", "min": 0, "max": 1,   "default": 0.6 },
+          { "id": "preDelay", "min": 0, "max": 100, "default": 20, "unit": "ms" },
+          { "id": "mix",      "min": 0, "max": 1,   "default": 0.3 }
+        ]
+      }
+      │
+      ▼
+POST /api/plugins/:id/compile
+  └─► BullMQ enqueues { pluginId, compilationJobId }
+      │
+      ▼
+Worker: POST /repos/.../actions/workflows/compile-plugin.yml/dispatches
+  inputs: { template_name, plugin_name, dsp_spec_json }
+      │
+      ▼
+GitHub Actions (macos-latest)
+  ├─ inject_spec.py → Source/generated_config.h  (parameter macros)
+  ├─ cmake build → MyPlugin.component (AU) + MyPlugin.vst3
+  ├─ codesign (if APPLE_CERTIFICATE_BASE64 set)
+  ├─ auval + pluginval (strictness 5)
+  ├─ pkgbuild + productbuild → MyPlugin-1.0.0-installer.pkg
+  └─ Upload artifact (30-day retention)
+      │
+      ▼
+Worker polls every 15s → on success fetches artifact URLs
+  └─► DB: Plugin.auUrl, Plugin.vst3Url, Plugin.pkgUrl set
+      DB: CompilationJob.status → COMPLETED
+      │
+      ▼
+Frontend WebSocket receives update → download buttons appear
+```
 
 ---
 
 ## Repo Structure
 
 ```
-chibitek-plugin-platform/
+chris-grau-plugin-platform/
+│
 ├── .github/
 │   └── workflows/
-│       ├── compile-plugin.yml      ← Main build pipeline (workflow_dispatch)
-│       └── validate-template.yml   ← PR gate: validates templates on every PR
+│       ├── compile-plugin.yml      # Main build pipeline (12 steps, macos-latest)
+│       └── validate-template.yml  # PR gate — validates template changes before merge
 │
-├── templates/                      ← JUCE plugin templates
-│   └── <template-name>/
-│       ├── CMakeLists.txt          ← Must include Source/generated_config.h
+├── backend/                        # Fastify API + BullMQ worker
+│   ├── src/
+│   │   ├── index.ts                # Server entry — registers routes, starts worker
+│   │   ├── routes/plugins.ts       # All plugin API endpoints
+│   │   ├── services/ai.ts          # Claude integration → DspSpec
+│   │   └── jobs/compile.ts         # Worker — triggers + polls GitHub Actions
+│   ├── prisma/
+│   │   ├── schema.prisma           # 5-table schema
+│   │   └── migrations/             # Applied SQL migrations
+│   ├── .env.example
+│   └── package.json
+│
+├── frontend/                       # Next.js 14 app
+│   ├── app/
+│   │   ├── page.tsx                # Landing page — mode selector
+│   │   ├── layout.tsx              # Root layout
+│   │   └── studio/page.tsx         # Plugin builder — chat + preview
+│   ├── components/
+│   │   ├── chat/ChatPanel.tsx      # Streaming AI chat
+│   │   └── preview/
+│   │       ├── PluginPreview.tsx   # Build status + download links
+│   │       └── WebAudioPreview.tsx # In-browser audio preview (Tone.js)
+│   ├── lib/
+│   │   ├── api.ts                  # API client + Zod schemas
+│   │   └── utils.ts
+│   └── package.json
+│
+├── templates/                      # JUCE plugin templates
+│   └── reverb-plate-v1/
+│       ├── CMakeLists.txt          # JUCE 7 FetchContent build
+│       ├── dsp_spec.json           # Canonical parameter spec
 │       └── Source/
-│           ├── PluginProcessor.h
-│           ├── PluginProcessor.cpp
-│           └── generated_config.h  ← AUTO-GENERATED by inject_spec.py (don't edit)
+│           ├── PluginProcessor.{h,cpp}   # Plate reverb DSP
+│           └── PluginEditor.{h,cpp}      # Rotary knob GUI
 │
 ├── scripts/
-│   ├── inject_spec.py              ← Injects DspSpec JSON → generated_config.h
-│   ├── validate_plugin.sh          ← Runs auval + pluginval, outputs pass/fail
-│   └── package_plugin.sh           ← Creates .pkg installer via pkgbuild/productbuild
+│   ├── inject_spec.py              # DspSpec JSON → generated_config.h
+│   ├── validate_plugin.sh          # auval + pluginval validation
+│   └── package_plugin.sh           # macOS .pkg installer creation
 │
-├── backend/                        ← Backend API server (managed by backend agent)
-├── frontend/                       ← Web UI (managed by frontend agent)
-│
-├── docker-compose.yml              ← Local dev: Postgres (5432) + Redis (6379)
-└── README.md                       ← This file
+├── supabase/                       # Supabase project metadata
+├── docker-compose.yml              # Local Postgres 16 + Redis 7 + dev tools
+├── BUILD_STATUS.md                 # Sprint status and open todos
+├── ARCHITECTURE.md                 # Deep dive into system design
+└── SPRINT_LOG.md                   # Sprint history and roadmap
 ```
+
+---
+
+## Local Dev Setup
+
+### Prerequisites
+
+- Node.js 20+
+- Docker Desktop
+- Python 3.10+
+- macOS (required for JUCE compilation and auval validation)
+
+### 1. Clone
+
+```bash
+git clone https://github.com/erickgrau/chris-grau-plugin-platform.git
+cd chris-grau-plugin-platform
+```
+
+### 2. Start infrastructure
+
+```bash
+# Postgres + Redis
+docker compose up -d
+
+# Add pgAdmin (localhost:5050) and Redis Commander (localhost:8081)
+docker compose --profile dev up -d
+```
+
+### 3. Configure and start backend
+
+```bash
+cd backend
+cp .env.example .env
+# Fill in ANTHROPIC_API_KEY and GITHUB_TOKEN at minimum
+npm install
+npm run prisma:migrate
+npm run dev
+# → listening on http://localhost:3001
+```
+
+### 4. Configure and start frontend
+
+```bash
+cd frontend
+cp .env.local.example .env.local
+npm install
+npm run dev
+# → http://localhost:3000
+```
+
+---
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string (Supabase pooler or local) |
+| `REDIS_HOST` | Yes | Redis host (default: `localhost`) |
+| `REDIS_PORT` | Yes | Redis port (default: `6379`) |
+| `REDIS_PASSWORD` | No | Redis auth (docker-compose default: `chibitek_local`) |
+| `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` + `workflow` scopes |
+| `GITHUB_OWNER` | Yes | GitHub org/user (default: `erickgrau`) |
+| `GITHUB_REPO` | Yes | Repo name (default: `chris-grau-plugin-platform`) |
+| `GITHUB_WORKFLOW_ID` | Yes | Workflow file (default: `compile-plugin.yml`) |
+| `ANTHROPIC_API_KEY` | Yes | Claude API key (`sk-ant-...`) |
+| `CORS_ORIGIN` | Yes | Frontend URL (default: `http://localhost:3000`) |
+| `R2_PUBLIC_URL` | No | Cloudflare R2 base URL (future artifact storage) |
+| `NODE_ENV` | No | `development` or `production` |
+| `START_WORKER` | No | Set `false` to run API without the BullMQ worker |
+
+### Frontend (`frontend/.env.local`)
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_BACKEND_URL` | Yes | Backend API URL (default: `http://localhost:3001`) |
+| `NEXT_PUBLIC_WS_URL` | Yes | WebSocket URL (default: `http://localhost:3001`) |
+
+### GitHub Actions Secrets
+
+| Secret | Required | Description |
+|---|---|---|
+| `APPLE_CERTIFICATE_BASE64` | No | Base64-encoded `.p12` developer certificate |
+| `APPLE_CERTIFICATE_PASSWORD` | No | Password for the `.p12` |
+| `APPLE_TEAM_ID` | No | Apple Developer Team ID |
+| `PKG_SIGNING_IDENTITY` | No | Installer signing identity string |
+| `BUILD_WEBHOOK_URL` | No | URL to POST on build failure |
+
+All codesigning secrets are optional. Without them the build succeeds — plugins are just unsigned.
 
 ---
 
 ## Triggering a Build
 
-### Via GitHub Actions UI
+### Via the UI
 
-1. Go to **Actions** → **Compile Plugin**
-2. Click **Run workflow**
-3. Fill in the inputs:
+1. Open `http://localhost:3000`
+2. Click **Describe It** (Mode 1)
+3. Type a plugin description in the chat panel
+4. When the DspSpec appears, click **Build Plugin**
+5. Watch real-time status in the preview panel
+6. Download AU, VST3, or PKG when complete
 
-| Input | Description | Example |
-|-------|-------------|---------|
-| `template_name` | Directory name under `templates/` | `BasicEffect` |
-| `plugin_name` | Output plugin name | `MyCompressor` |
-| `dsp_spec_json` | Full DspSpec JSON string | see below |
+### Via the API
 
-### Via GitHub CLI
+```bash
+# Step 1: generate DspSpec
+curl -X POST http://localhost:3001/api/plugins/generate \
+  -H "Content-Type: application/json" \
+  -d '{"description": "warm plate reverb with pre-delay and mix", "mode": 1}'
+
+# Step 2: compile
+curl -X POST http://localhost:3001/api/plugins/{pluginId}/compile \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Step 3: poll status
+curl http://localhost:3001/api/plugins/{pluginId}/status
+```
+
+### Via GitHub CLI (manual)
 
 ```bash
 gh workflow run compile-plugin.yml \
-  --field template_name=BasicEffect \
-  --field plugin_name=MyCompressor \
-  --field dsp_spec_json='{"plugin_type":"effect","parameters":[{"id":"gain","name":"Gain","min":0,"max":1,"default":0.5}]}'
-```
-
-### Via API (from the backend)
-
-```bash
-curl -X POST \
-  -H "Authorization: token $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/chibitek/plugin-platform/actions/workflows/compile-plugin.yml/dispatches" \
-  -d '{
-    "ref": "main",
-    "inputs": {
-      "template_name": "BasicEffect",
-      "plugin_name": "MyCompressor",
-      "dsp_spec_json": "{\"plugin_type\":\"effect\",\"parameters\":[{\"id\":\"gain\",\"name\":\"Gain\",\"min\":0,\"max\":1,\"default\":0.5}]}"
-    }
-  }'
+  --field template_name=reverb-plate-v1 \
+  --field plugin_name="My Reverb" \
+  --field dsp_spec_json='{"type":"effect","parameters":[...]}'
 ```
 
 ---
 
-## DspSpec JSON Format
+## GitHub Actions Workflows
 
-```json
-{
-  "plugin_type": "effect",
-  "plugin_version": "1.0.0",
-  "manufacturer": "Chibitek Labs",
-  "description": "AI-generated compressor",
-  "parameters": [
-    {
-      "id": "gain",
-      "name": "Gain",
-      "min": 0.0,
-      "max": 1.0,
-      "default": 0.5,
-      "unit": "linear",
-      "skew": 1.0,
-      "step": 0.0
-    },
-    {
-      "id": "threshold",
-      "name": "Threshold",
-      "min": -60.0,
-      "max": 0.0,
-      "default": -12.0,
-      "unit": "dB"
-    }
-  ]
-}
-```
+### `compile-plugin.yml` — Main Build Pipeline
 
-**Plugin types:** `effect` | `instrument` | `analyzer`
+Triggered by `workflow_dispatch`. Runs on `macos-latest`.
 
-**Units:** `linear` | `dB` | `Hz` | `kHz` | `ms` | `%`
+**Inputs:** `template_name`, `plugin_name`, `dsp_spec_json`
 
----
-
-## Build Pipeline Steps
-
-```
+**Steps:**
 1. Checkout repo
-2. Cache CMake / JUCE
-3. Install deps (cmake, ninja via Homebrew)
-4. inject_spec.py → writes Source/generated_config.h
-5. cmake configure (FetchContent pulls JUCE)
-6. cmake build (Release, parallel)
-7. Locate .component + .vst3 bundles
-8. Codesign (skipped if APPLE_CERTIFICATE_BASE64 not set)
-9. validate_plugin.sh → auval + pluginval
-10. package_plugin.sh → .pkg installer
-11. Upload artifact (30-day retention)
-12. On failure: POST to BUILD_WEBHOOK_URL
-```
+2. Restore CMake/JUCE build cache
+3. Install `cmake` + `ninja` via Homebrew
+4. `inject_spec.py` — writes `Source/generated_config.h` with parameter macros
+5. `cmake` configure (Release, FetchContent JUCE)
+6. `cmake` build (Release, parallel jobs)
+7. Locate `.component` + `.vst3` bundles
+8. Codesign (skips gracefully if secrets absent)
+9. `validate_plugin.sh` — auval + pluginval at strictness level 5
+10. `package_plugin.sh` — pkgbuild + productbuild → `.pkg`
+11. Upload all artifacts (30-day retention)
+12. POST `BUILD_WEBHOOK_URL` on failure (if set)
+
+### `validate-template.yml` — PR Gate
+
+Triggered on PRs touching `templates/**`, `scripts/**`, `.github/workflows/**`.
+
+Runs `inject_spec.py` dry-run and `cmake` configure check — no full build. PRs fail if template files are missing or the spec injection breaks.
 
 ---
 
-## Required GitHub Secrets
+## Contributing
 
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `APPLE_CERTIFICATE_BASE64` | Optional | P12 cert, base64-encoded |
-| `APPLE_CERTIFICATE_PASSWORD` | Optional | P12 password |
-| `APPLE_TEAM_ID` | Optional | Apple Developer Team ID |
-| `PKG_SIGNING_IDENTITY` | Optional | "Developer ID Installer: ..." |
-| `BUILD_WEBHOOK_URL` | Optional | Failure notification endpoint |
+### Adding a template
 
-If signing secrets are absent, the pipeline produces an **unsigned** build and continues.
+1. Create `templates/your-template-name/` modeled on `reverb-plate-v1`
+2. Required: `CMakeLists.txt`, `dsp_spec.json`, `Source/PluginProcessor.{h,cpp}`, `Source/PluginEditor.{h,cpp}`
+3. Your `CMakeLists.txt` must `#include "generated_config.h"` — that's what `inject_spec.py` writes
+4. Open a PR — `validate-template.yml` runs automatically
+5. Once merged, register your `templateId` in `backend/src/services/ai.ts`
 
----
+### Backend
 
-## Local Development
+- Routes in `backend/src/routes/plugins.ts` — validate with Zod, write via Prisma, no raw SQL
+- New job types get a dedicated file in `backend/src/jobs/`
 
-### Start services
+### Frontend
 
-```bash
-docker compose up -d
-```
+- Pages: `frontend/app/` (Next.js 14 App Router)
+- Shared components: `frontend/components/`
+- API types are Zod schemas in `frontend/lib/api.ts` — keep in sync with backend
 
-### With dev tools (pgAdmin + Redis Commander)
+### Hard rules
 
-```bash
-docker compose --profile dev-tools up -d
-```
-
-| Service | URL | Default creds |
-|---------|-----|---------------|
-| PostgreSQL | `localhost:5432` | `chibitek` / `chibitek_local` |
-| Redis | `localhost:6379` | password: `chibitek_local` |
-| pgAdmin | http://localhost:5050 | `admin@chibitek.local` / `admin` |
-| Redis UI | http://localhost:8081 | — |
-
-### Environment overrides (.env)
-
-```bash
-cp .env.example .env  # edit as needed
-```
-
----
-
-## Adding a Template
-
-1. Create `templates/<your-template>/`
-2. Add a `CMakeLists.txt` that:
-   - Uses `FetchContent` to pull JUCE
-   - Adds `juce_add_plugin()`
-   - Includes `Source/generated_config.h` in your plugin source
-3. Open a PR — `validate-template.yml` will gate it automatically
-
----
-
-## Scripts Reference
-
-### `inject_spec.py`
-```bash
-python3 scripts/inject_spec.py \
-  --spec '{"plugin_type":"effect","parameters":[...]}' \
-  --template templates/MyTemplate \
-  --plugin-name MyPlugin \
-  [--dry-run]   # validate only, don't write files
-```
-
-### `validate_plugin.sh`
-```bash
-./scripts/validate_plugin.sh <au_path> <vst3_path> <plugin_name>
-# PLUGINVAL_STRICTNESS=7 ./scripts/validate_plugin.sh ...  (default: 5)
-```
-
-### `package_plugin.sh`
-```bash
-PLUGIN_VERSION=1.2.0 \
-PKG_SIGNING_IDENTITY="Developer ID Installer: Chibitek Labs (XXXXXXXXXX)" \
-./scripts/package_plugin.sh MyPlugin /path/to/My.component /path/to/My.vst3 ./dist/
-```
-
----
-
-## Architecture Notes
-
-- **Templates** are pure JUCE projects. The `generated_config.h` they include is the only AI-generated artifact baked in at compile time.
-- **Backend** triggers `workflow_dispatch` via GitHub API and polls for run completion.
-- **Frontend** shows build status, download links, and parameter UI.
-- **Artifacts** are stored in GitHub Actions for 30 days; the backend downloads and re-hosts them for paying customers.
+- No mock/seed data — the platform syncs with real systems only
+- No hardcoded credentials — everything in environment variables
+- No RLS changes on Supabase without explicit instruction
