@@ -1,0 +1,189 @@
+name: Compile Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      template_name:
+        description: "Template directory name (under templates/)"
+        required: true
+        type: string
+      plugin_name:
+        description: "Output plugin name (e.g. MyCompressor)"
+        required: true
+        type: string
+      dsp_spec_json:
+        description: "DspSpec JSON (parameters, plugin type, etc.)"
+        required: true
+        type: string
+
+env:
+  BUILD_DIR: ${{ github.workspace }}/build
+  ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+  PLUGINVAL_VERSION: "1.0.3"
+
+jobs:
+  compile:
+    name: Compile & Package Plugin
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      # ─── 1. Checkout ───────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ─── 2. Cache CMake / JUCE ─────────────────────────────────────────────
+      - name: Cache CMake build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}
+            ~/.cmake
+          key: ${{ runner.os }}-cmake-${{ inputs.template_name }}-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-${{ inputs.template_name }}-
+            ${{ runner.os }}-cmake-
+
+      # ─── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install system dependencies
+        run: |
+          brew update
+          brew install cmake ninja
+
+      # ─── 4. Inject DspSpec into template ────────────────────────────────────
+      - name: Inject DspSpec into template
+        run: |
+          python3 scripts/inject_spec.py \
+            --spec '${{ inputs.dsp_spec_json }}' \
+            --template templates/${{ inputs.template_name }} \
+            --plugin-name '${{ inputs.plugin_name }}'
+
+      # ─── 5. CMake configure ─────────────────────────────────────────────────
+      - name: CMake configure
+        run: |
+          cmake -S templates/${{ inputs.template_name }} \
+                -B $BUILD_DIR \
+                -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DPLUGIN_NAME="${{ inputs.plugin_name }}" \
+                -DFETCHCONTENT_QUIET=OFF
+
+      # ─── 6. CMake build ─────────────────────────────────────────────────────
+      - name: CMake build
+        run: |
+          cmake --build $BUILD_DIR --config Release --parallel $(sysctl -n hw.logicalcpu)
+
+      # ─── 7. Locate built artifacts ──────────────────────────────────────────
+      - name: Locate built plugin
+        id: locate
+        run: |
+          # Search for AU and VST3 bundles produced by the build
+          AU_PATH=$(find $BUILD_DIR -name "*.component" -maxdepth 8 | head -1)
+          VST3_PATH=$(find $BUILD_DIR -name "*.vst3" -maxdepth 8 | head -1)
+          echo "au_path=${AU_PATH}" >> $GITHUB_OUTPUT
+          echo "vst3_path=${VST3_PATH}" >> $GITHUB_OUTPUT
+          echo "Found AU:   ${AU_PATH}"
+          echo "Found VST3: ${VST3_PATH}"
+
+      # ─── 8. Code-sign (skip gracefully if cert not configured) ─────────────
+      - name: Import signing certificate
+        if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' }}
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 16)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Codesign plugins
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+            echo "⚠️  No signing certificate configured — skipping codesign."
+            exit 0
+          fi
+
+          IDENTITY="Developer ID Application: $APPLE_TEAM_ID"
+
+          for PLUGIN in "${{ steps.locate.outputs.au_path }}" "${{ steps.locate.outputs.vst3_path }}"; do
+            if [ -n "$PLUGIN" ] && [ -e "$PLUGIN" ]; then
+              echo "Signing: $PLUGIN"
+              codesign --force --deep --sign "$IDENTITY" \
+                --options runtime \
+                --timestamp \
+                "$PLUGIN"
+            fi
+          done
+
+      # ─── 9. Validate (auval + pluginval) ────────────────────────────────────
+      - name: Validate plugin
+        run: |
+          chmod +x scripts/validate_plugin.sh
+          scripts/validate_plugin.sh \
+            "${{ steps.locate.outputs.au_path }}" \
+            "${{ steps.locate.outputs.vst3_path }}" \
+            "${{ inputs.plugin_name }}"
+
+      # ─── 10. Package as .pkg ────────────────────────────────────────────────
+      - name: Package plugin
+        run: |
+          mkdir -p $ARTIFACTS_DIR
+          chmod +x scripts/package_plugin.sh
+          scripts/package_plugin.sh \
+            "${{ inputs.plugin_name }}" \
+            "${{ steps.locate.outputs.au_path }}" \
+            "${{ steps.locate.outputs.vst3_path }}" \
+            "$ARTIFACTS_DIR"
+
+      # ─── 11. Upload artifact ────────────────────────────────────────────────
+      - name: Upload .pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.plugin_name }}-installer
+          path: ${{ env.ARTIFACTS_DIR }}/*.pkg
+          retention-days: 30
+
+      # ─── 12. Notify on failure ──────────────────────────────────────────────
+      - name: Notify failure via webhook
+        if: failure()
+        env:
+          WEBHOOK_URL: ${{ secrets.BUILD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "No webhook URL configured — skipping failure notification."
+            exit 0
+          fi
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "event": "build_failed",
+            "plugin_name": "${{ inputs.plugin_name }}",
+            "template_name": "${{ inputs.template_name }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "triggered_by": "${{ github.actor }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          )
+
+          curl -s -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            || echo "Webhook delivery failed (non-fatal)"

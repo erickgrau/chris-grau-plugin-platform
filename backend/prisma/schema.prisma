@@ -1,0 +1,142 @@
+// Chibitek Labs — Plugin Builder Platform
+// Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserTier {
+  FREE
+  PRO
+  CREATOR
+}
+
+enum PluginStatus {
+  PENDING
+  COMPILING
+  READY
+  FAILED
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String?
+  tier             UserTier  @default(FREE)
+  buildsThisMonth  Int       @default(0)
+  stripeCustomerId String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  plugins              Plugin[]
+  presets              Preset[]
+  marketplaceListings  MarketplaceListing[]
+
+  @@map("users")
+}
+
+model Plugin {
+  id          String       @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  /// Plugin mode: 1 = Template-based, 2 = AI-assisted, 3 = Custom DSP
+  mode        Int          @default(1)
+  /// DspSpec JSON: {type, algorithm, parameters, signalFlow, templateId}
+  dspSpec     Json?
+  /// GuiSpec JSON: layout and control definitions
+  guiSpec     Json?
+  status      PluginStatus @default(PENDING)
+  auUrl       String?
+  vst3Url     String?
+  pkgUrl      String?
+  version     String       @default("1.0.0")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  compilationJobs  CompilationJob[]
+  presets          Preset[]
+  marketplaceListings MarketplaceListing[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("plugins")
+}
+
+model CompilationJob {
+  id             String    @id @default(cuid())
+  pluginId       String
+  status         JobStatus @default(QUEUED)
+  /// GitHub Actions runner ID or BullMQ job ID
+  runnerId       String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  /// Result of `auval` validation (pass/fail/skipped + output)
+  auvalResult    String?
+  /// Result of `pluginval` validation
+  pluginvalResult String?
+  errorLog       String?
+  retryCount     Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId])
+  @@index([status])
+  @@map("compilation_jobs")
+}
+
+model Preset {
+  id         String   @id @default(cuid())
+  pluginId   String
+  userId     String
+  name       String
+  /// Preset parameters: {[paramKey]: value}
+  parameters Json
+  isPublic   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([pluginId])
+  @@index([userId])
+  @@map("presets")
+}
+
+model MarketplaceListing {
+  id        String   @id @default(cuid())
+  pluginId  String   @unique
+  userId    String
+  price     Float    @default(0)
+  sales     Int      @default(0)
+  rating    Float    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plugin Plugin @relation(fields: [pluginId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("marketplace_listings")
+}

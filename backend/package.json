@@ -1,0 +1,35 @@
+{
+  "name": "chibitek-plugin-platform-backend",
+  "version": "0.1.0",
+  "description": "Chibitek Labs AU/VST Plugin Builder Platform — Backend API",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@fastify/websocket": "^8.3.1",
+    "@prisma/client": "^5.15.0",
+    "bullmq": "^5.12.0",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.0",
+    "ioredis": "^5.4.1",
+    "stripe": "^16.2.0",
+    "tsx": "^4.16.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "prisma": "^5.15.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

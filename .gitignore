@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Build outputs
+build/
+dist/
+*.o
+*.a
+*.dylib
+
+# Environment
+.env
+.env.local
+*.env.local
+
+# macOS
+.DS_Store
+
+# JUCE build cache
+templates/*/build/
+templates/*/.jucer
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log

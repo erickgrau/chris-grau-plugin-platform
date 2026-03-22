@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark studio theme as default */
+    --background: 240 5% 7%;
+    --foreground: 240 5% 96%;
+
+    --card: 240 5% 9%;
+    --card-foreground: 240 5% 96%;
+
+    --popover: 240 4% 11%;
+    --popover-foreground: 240 5% 96%;
+
+    --primary: 38 92% 50%;
+    --primary-foreground: 240 5% 7%;
+
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 240 5% 96%;
+
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 45%;
+
+    --accent: 195 100% 44%;
+    --accent-foreground: 240 5% 7%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 240 5% 96%;
+
+    --border: 240 4% 25%;
+    --input: 240 4% 16%;
+    --ring: 38 92% 50%;
+
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-studio-black text-foreground antialiased;
+    background-color: #0a0a0b;
+    color: #f4f4f5;
+  }
+
+  /* Custom scrollbar for studio aesthetic */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #111113;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #52525b;
+  }
+}
+
+@layer components {
+  /* Knob base styles */
+  .knob-container {
+    @apply relative flex flex-col items-center gap-1;
+  }
+
+  .knob {
+    @apply relative rounded-full cursor-pointer select-none;
+    background: radial-gradient(circle at 35% 35%, #3f3f46, #18181b);
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 0 0 1px rgba(63, 63, 70, 0.8);
+  }
+
+  .knob:hover {
+    box-shadow:
+      0 2px 12px rgba(0, 0, 0, 0.8),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 0 0 1px rgba(245, 158, 11, 0.4);
+  }
+
+  /* Studio panel */
+  .studio-panel {
+    @apply bg-studio-darker border border-studio-border rounded-lg;
+  }
+
+  /* LED indicator */
+  .led {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .led-on {
+    background: #22c55e;
+    box-shadow: 0 0 6px #22c55e, 0 0 12px rgba(34, 197, 94, 0.4);
+  }
+
+  .led-off {
+    background: #1a1a1a;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+
+  .led-amber {
+    background: #f59e0b;
+    box-shadow: 0 0 6px #f59e0b, 0 0 12px rgba(245, 158, 11, 0.4);
+  }
+}
+
+/* Streaming cursor blink */
+.streaming-cursor::after {
+  content: '▋';
+  animation: blink 1s step-end infinite;
+  color: #f59e0b;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

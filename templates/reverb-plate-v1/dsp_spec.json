@@ -1,0 +1,99 @@
+{
+  "$schema": "https://chibitek.com/schemas/dsp-spec/v1.json",
+  "template": "reverb-plate-v1",
+  "version": "1.0.0",
+  "plugin": {
+    "name": "Reverb Plate",
+    "manufacturer": "Chibitek Labs",
+    "manufacturerCode": "CHBT",
+    "pluginCode": "RvPl",
+    "formats": ["AU", "VST3"],
+    "isSynth": false,
+    "hasMidi": false,
+    "tailLengthSeconds": 6.0,
+    "busLayout": {
+      "inputs": [{ "name": "Input", "channelSet": "stereo" }],
+      "outputs": [{ "name": "Output", "channelSet": "stereo" }]
+    }
+  },
+  "parameters": [
+    {
+      "id": "roomSize",
+      "name": "Room Size",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.6,
+      "step": 0.001,
+      "unit": "",
+      "description": "Controls the size of the simulated reverb plate. Higher values produce longer, denser tails.",
+      "automatable": true,
+      "dspMapping": "juce::dsp::Reverb::Parameters::roomSize"
+    },
+    {
+      "id": "damping",
+      "name": "Damping",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.4,
+      "step": 0.001,
+      "unit": "",
+      "description": "High-frequency damping in the reverb tail. Higher values produce a warmer, darker sound.",
+      "automatable": true,
+      "dspMapping": "juce::dsp::Reverb::Parameters::damping"
+    },
+    {
+      "id": "mix",
+      "name": "Mix",
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "default": 0.3,
+      "step": 0.001,
+      "unit": "",
+      "description": "Wet/dry blend. 0 = fully dry, 1 = fully wet. Maps to wetLevel; dryLevel = 1 - mix.",
+      "automatable": true,
+      "dspMapping": "juce::dsp::Reverb::Parameters::wetLevel"
+    },
+    {
+      "id": "preDelay",
+      "name": "Pre-Delay",
+      "type": "float",
+      "min": 0.0,
+      "max": 100.0,
+      "default": 20.0,
+      "step": 0.1,
+      "unit": "ms",
+      "description": "Time delay before the signal enters the reverb plate. Creates separation between dry and wet signals.",
+      "automatable": true,
+      "dspMapping": "juce::dsp::DelayLine (per-channel, Linear interpolation)"
+    }
+  ],
+  "dspChain": [
+    {
+      "stage": 1,
+      "name": "Pre-Delay",
+      "type": "juce::dsp::DelayLine<float, LinearInterpolation>",
+      "channels": "stereo",
+      "controlledBy": ["preDelay"]
+    },
+    {
+      "stage": 2,
+      "name": "Plate Reverb",
+      "type": "juce::dsp::Reverb",
+      "channels": "stereo",
+      "controlledBy": ["roomSize", "damping", "mix"]
+    }
+  ],
+  "aiInjectionPoints": {
+    "description": "Fields that an AI DspSpec generator may override when customising this template.",
+    "overridable": [
+      "parameters[*].default",
+      "parameters[*].min",
+      "parameters[*].max",
+      "plugin.name",
+      "plugin.pluginCode"
+    ]
+  }
+}

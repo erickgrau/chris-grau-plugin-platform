@@ -1,0 +1,80 @@
+name: Validate Template (PR)
+
+on:
+  pull_request:
+    paths:
+      - "templates/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+
+jobs:
+  validate:
+    name: Validate Template Structure
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install cmake ninja python3
+
+      - name: Detect changed templates
+        id: changes
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+            | grep '^templates/' \
+            | awk -F/ '{print $2}' \
+            | sort -u)
+          echo "templates=${CHANGED}" >> $GITHUB_OUTPUT
+          echo "Changed templates: $CHANGED"
+
+      - name: Validate template CMakeLists.txt exists
+        run: |
+          FAILED=0
+          for TMPL in ${{ steps.changes.outputs.templates }}; do
+            echo "→ Checking templates/$TMPL ..."
+            if [ ! -f "templates/$TMPL/CMakeLists.txt" ]; then
+              echo "  ✗ Missing CMakeLists.txt"
+              FAILED=1
+            else
+              echo "  ✓ CMakeLists.txt present"
+            fi
+            if [ ! -f "templates/$TMPL/Source/PluginProcessor.cpp" ] && \
+               [ ! -f "templates/$TMPL/Source/PluginProcessor.h" ]; then
+              echo "  ✗ Missing Source/PluginProcessor files"
+              FAILED=1
+            else
+              echo "  ✓ PluginProcessor files present"
+            fi
+          done
+          exit $FAILED
+
+      - name: Dry-run inject_spec.py with dummy spec
+        run: |
+          DUMMY_SPEC='{"plugin_type":"effect","parameters":[{"id":"gain","name":"Gain","min":0.0,"max":1.0,"default":0.5,"unit":"linear"}]}'
+          for TMPL in ${{ steps.changes.outputs.templates }}; do
+            echo "→ Injecting dummy spec into templates/$TMPL ..."
+            python3 scripts/inject_spec.py \
+              --spec "$DUMMY_SPEC" \
+              --template "templates/$TMPL" \
+              --plugin-name "ValidateTest" \
+              --dry-run
+          done
+
+      - name: CMake configure (syntax check only)
+        run: |
+          for TMPL in ${{ steps.changes.outputs.templates }}; do
+            echo "→ CMake configure check for templates/$TMPL ..."
+            cmake -S "templates/$TMPL" \
+                  -B "/tmp/validate-$TMPL" \
+                  -G Ninja \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  -DPLUGIN_NAME="ValidateTest" \
+                  || (echo "  ✗ CMake configure failed"; exit 1)
+            echo "  ✓ CMake configure OK"
+          done
