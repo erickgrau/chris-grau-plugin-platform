@@ -8,24 +8,32 @@ import { z } from 'zod';
 
 // ─── DspSpec Schema ───────────────────────────────────────────────────────────
 
-export const DspParameterSchema = z.object({
-  default: z.number(),
-  min: z.number(),
-  max: z.number(),
+export const DspLayerSchema = z.object({
+  id: z.string(),
+  type: z.string(),
   label: z.string(),
-  unit: z.string(),
+  blend: z.number().min(0).max(1).default(1),
+  parameters: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    min: z.number(),
+    max: z.number(),
+    default: z.number(),
+    unit: z.string().default('linear'),
+  })),
 });
 
 export const DspSpecSchema = z.object({
-  type: z.enum(['filter', 'compressor', 'reverb', 'delay', 'distortion', 'eq', 'synth', 'utility', 'custom']),
-  algorithm: z.string().describe('e.g. "biquad-lowpass", "vintage-vca", "plate-reverb"'),
-  parameters: z.record(z.string(), DspParameterSchema),
-  signalFlow: z.array(z.string()).describe('Ordered list of processing stages'),
-  templateId: z.string().nullable().describe('Reference to a built-in template, or null for custom'),
+  plugin_type: z.enum(['effect', 'instrument', 'analyzer']).default('effect'),
+  plugin_version: z.string().default('1.0.0'),
+  manufacturer: z.string().default('Chibitek Labs'),
+  description: z.string(),
+  layers: z.array(DspLayerSchema).min(1).max(6),
+  signalFlow: z.array(z.string()),
 });
 
 export type DspSpec = z.infer<typeof DspSpecSchema>;
-export type DspParameter = z.infer<typeof DspParameterSchema>;
+export type DspLayer = z.infer<typeof DspLayerSchema>;
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
@@ -40,28 +48,46 @@ Your job is to translate natural language descriptions of audio plugins into pre
 
 DSPSPEC JSON SCHEMA:
 {
-  "type": one of: "filter" | "compressor" | "reverb" | "delay" | "distortion" | "eq" | "synth" | "utility" | "custom",
-  "algorithm": string describing the specific algorithm (e.g., "biquad-lowpass", "tube-saturation", "schroeder-reverb"),
-  "parameters": {
-    "[paramKey]": {
-      "default": number,
-      "min": number,
-      "max": number,
-      "label": string (human-readable name),
-      "unit": string (e.g., "Hz", "dB", "ms", "%", "ratio", "")
+  "plugin_type": "effect" | "instrument" | "analyzer",
+  "plugin_version": "1.0.0",
+  "manufacturer": "Chibitek Labs",
+  "description": string,
+  "layers": [
+    {
+      "id": string (camelCase unique id, e.g. "reverb_0"),
+      "type": one of: "reverb" | "delay" | "eq" | "chorus" | "compressor" | "distortion",
+      "label": string (human-readable, e.g. "Reverb"),
+      "blend": number 0.0–1.0 (wet/dry mix for this layer, 1.0 = fully wet),
+      "parameters": [
+        {
+          "id": string (camelCase, e.g. "roomSize"),
+          "name": string (display name, e.g. "Room Size"),
+          "min": number,
+          "max": number,
+          "default": number,
+          "unit": "linear" | "dB" | "Hz" | "ms" | "%"
+        }
+      ]
     }
-  },
-  "signalFlow": string[] (ordered processing stages, e.g., ["input", "preamp", "filter", "output"]),
-  "templateId": string | null (reference to built-in template, or null for custom)
+  ],
+  "signalFlow": string[] (ordered processing stage ids)
 }
 
-RULES:
-1. Always include at least 2 and at most 16 parameters
-2. Parameter keys must be camelCase (e.g., "cutoffFrequency", "attackTime")
-3. Parameter ranges must be musically sensible and physically accurate
-4. signalFlow should describe the actual signal path through the plugin
-5. If the description matches a known plugin type, set templateId to a known template ID
-6. Return ONLY valid JSON, no markdown, no explanation`;
+LAYER RULES:
+- Single effect description (e.g. "a reverb") → 1 layer
+- Multi-effect description (e.g. "reverb into delay") → 2+ layers, one per effect
+- "reverb + chorus + delay" → 3 layers
+- Max 6 layers total
+- Each layer has 2–6 parameters relevant to its type
+- Typical parameters by type:
+  - reverb: roomSize [0,1], damping [0,1], mix [0,1]
+  - delay: delayTime [1,2000 ms], feedback [0,0.95], mix [0,1]
+  - eq: cutoff [20,20000 Hz], q [0.1,10], gain [-24,24 dB]
+  - chorus: rate [0.1,10 Hz], depth [0,1], mix [0,1]
+  - compressor: threshold [-60,0 dB], ratio [1,20], attack [0.1,500 ms]
+  - distortion: drive [1,20], outputGain [-20,20 dB]
+
+Return ONLY valid JSON, no markdown, no explanation.`;
 
 // ─── Template IDs ─────────────────────────────────────────────────────────────
 
@@ -137,10 +163,14 @@ Return a DspSpec JSON object for this audio plugin.`;
   // Validate against our schema
   const result = DspSpecSchema.safeParse(parsed);
   if (!result.success) {
-    // Attempt recovery: inject templateId null if missing
-    if (parsed && typeof parsed === 'object' && !('templateId' in parsed)) {
-      (parsed as Record<string, unknown>).templateId = null;
-      const retry = DspSpecSchema.safeParse(parsed);
+    // Attempt recovery: inject missing top-level defaults
+    if (parsed && typeof parsed === 'object') {
+      const p = parsed as Record<string, unknown>;
+      if (!p.plugin_type) p.plugin_type = 'effect';
+      if (!p.manufacturer) p.manufacturer = 'Chibitek Labs';
+      if (!p.plugin_version) p.plugin_version = '1.0.0';
+      if (!p.description) p.description = 'AI-generated plugin';
+      const retry = DspSpecSchema.safeParse(p);
       if (retry.success) return retry.data;
     }
     throw new Error(`DspSpec validation failed: ${result.error.message}`);
