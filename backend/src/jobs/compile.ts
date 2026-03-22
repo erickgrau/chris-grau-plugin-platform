@@ -78,7 +78,7 @@ export const compileQueue = new Queue<CompileJobData>('plugin-compilation', {
 const GH_API = 'https://api.github.com';
 
 async function githubFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = process.env.GITHUB_TOKEN;
+  const token = process.env.GH_WORKFLOW_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN not configured');
 
   const res = await fetch(`${GH_API}${path}`, {
