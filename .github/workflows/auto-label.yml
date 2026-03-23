@@ -1,0 +1,130 @@
+name: Auto Label
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  label:
+    name: Auto Label PR
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Label by path and commit type
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) return;
+
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+
+            const labels = new Set();
+
+            // Path-based labels
+            const pathRules = [
+              { pattern: /^(src\/|app\/|pages\/|components\/|ui\/|frontend\/)/, label: 'frontend' },
+              { pattern: /^(api\/|server\/|backend\/|routes\/|controllers\/|services\/)/, label: 'backend' },
+              { pattern: /^(docs\/|\.github\/|README|CHANGELOG|COMMIT_STANDARD)/, label: 'documentation' },
+              { pattern: /^(infra\/|terraform\/|\.github\/workflows\/|docker|Dockerfile|k8s\/)/, label: 'infra' },
+              { pattern: /\.(test|spec)\.(ts|tsx|js|jsx|py)$/, label: 'enhancement' },
+              { pattern: /^(ai\/|agents\/|prompts\/|llm\/)/, label: 'ai' },
+              { pattern: /^(billing\/|cost\/|pricing\/)/, label: 'cost' },
+            ];
+
+            for (const file of files) {
+              for (const rule of pathRules) {
+                if (rule.pattern.test(file.filename)) {
+                  labels.add(rule.label);
+                }
+              }
+            }
+
+            // Commit type labels from PR title
+            const title = pr.title.toLowerCase();
+            if (/^fix(\(|:)/.test(title)) labels.add('bug');
+            if (/^feat(\(|:)/.test(title)) labels.add('enhancement');
+            if (/^docs(\(|:)/.test(title)) labels.add('documentation');
+            if (/^(chore|refactor|style)(\(|:)/.test(title)) labels.add('automated');
+            if (/^ai(\(|:)/.test(title)) labels.add('ai');
+            if (/^cost(\(|:)/.test(title)) labels.add('cost');
+            if (/^infra(\(|:)/.test(title)) labels.add('infra');
+
+            // Auto-assign
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                assignees: ['erickgrau'],
+              });
+            } catch (e) {
+              console.log('Could not assign:', e.message);
+            }
+
+            if (labels.size > 0) {
+              const labelList = [...labels];
+              console.log('Applying labels:', labelList);
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  labels: labelList,
+                });
+              } catch (e) {
+                console.log('Label error (may not exist):', e.message);
+              }
+            }
+
+  auto-close:
+    name: Auto Close Referenced Issues
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    steps:
+      - name: Close referenced issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = (pr.body || '') + ' ' + pr.title;
+
+            const issueRefs = body.match(/(?:closes?|fixes?|resolves?)\s+#(\d+)/gi) || [];
+            const issueNumbers = issueRefs.map(ref => parseInt(ref.match(/#(\d+)/)[1]));
+
+            for (const num of issueNumbers) {
+              try {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: num,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: num,
+                  body: `Closed by PR #${pr.number} — merged by @${pr.merged_by.login}.`,
+                });
+                console.log(`Closed issue #${num}`);
+              } catch (e) {
+                console.log(`Could not close #${num}:`, e.message);
+              }
+            }
