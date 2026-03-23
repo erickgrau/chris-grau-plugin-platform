@@ -353,6 +353,28 @@ def main():
 
     template_dir = Path(args.template)
 
+    # ── Normalize legacy dict-style parameters → array format ───────────────────
+    # Handles specs like: {"mix": {"label": "Wet/Dry Mix", "min": 0, "max": 100, ...}}
+    if "parameters" in spec and isinstance(spec["parameters"], dict):
+        converted = []
+        for param_id, param_data in spec["parameters"].items():
+            entry = {
+                "id":      param_id,
+                "name":    param_data.get("label", param_id),
+                "min":     param_data.get("min", 0.0),
+                "max":     param_data.get("max", 1.0),
+                "default": param_data.get("default", 0.0),
+            }
+            if "unit" in param_data:
+                entry["unit"] = param_data["unit"]
+            if "skew" in param_data:
+                entry["skew"] = param_data["skew"]
+            if "step" in param_data:
+                entry["step"] = param_data["step"]
+            converted.append(entry)
+        spec["parameters"] = converted
+        print(f"INFO: Normalized legacy dict parameters → {len(converted)} array entries", file=sys.stderr)
+
     # ── Fall back to template's dsp_spec.json for missing parameters ──────────
     if "parameters" not in spec:
         fallback_path = template_dir / "dsp_spec.json"
